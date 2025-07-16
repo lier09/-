@@ -1,0 +1,6 @@
+{
+  "name": "VO₂max/peak Analyzer for MetaLyzer Data",
+  "description": "An application to process and analyze VO₂ data from MetaLyzer Excel files, including outlier removal, data smoothing, VO₂max/peak determination, and percentage-based data extraction.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
