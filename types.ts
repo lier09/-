@@ -1,6 +1,6 @@
 
 export interface RawDataRow {
-  [key: string]: string | number;
+  [key:string]: string | number;
 }
 
 export interface ProcessedDataRow {
@@ -61,6 +61,8 @@ export interface KeyMetrics {
 }
 
 export interface BatchResult {
+  id: string;
+  testType: 'pre' | 'mid' | 'post' | 'unspecified';
   fileName: string;
   metrics: KeyMetrics;
   smoothedData?: ProcessedDataRow[];
