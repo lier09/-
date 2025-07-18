@@ -166,6 +166,7 @@ const App: React.FC = () => {
     const [currentStep, setCurrentStep] = useState(0);
     const [fileName, setFileName] = useState('');
     const [manualBodyWeight, setManualBodyWeight] = useState('');
+    const [singleFileDuration, setSingleFileDuration] = useState<number | null>(null);
     const [batchFiles, setBatchFiles] = useState<{file: File, weight: string}[]>([]);
     const [batchSortOrderText, setBatchSortOrderText] = useState('');
     const [batchResultsSortOrderText, setBatchResultsSortOrderText] = useState('');
@@ -198,6 +199,7 @@ const App: React.FC = () => {
         setManualBodyWeight(''); 
         setCurrentStep(0); 
         setFileName(''); 
+        setSingleFileDuration(null);
         setBatchFiles([]);
         setBatchSortOrderText('');
         setBatchResultsSortOrderText('');
@@ -206,11 +208,44 @@ const App: React.FC = () => {
         setCurrentBatchResults([]);
     };
 
-    const handleFileSelectForSingleAnalysis = useCallback((file: File) => { resetState(); setManualBodyWeight(''); setFileName(file.name); parseExcelFile(file); setCurrentStep(1); }, [parseExcelFile, resetState]);
+    const handleFileSelectForSingleAnalysis = useCallback((file: File) => {
+        resetState();
+        setManualBodyWeight('');
+        setFileName(file.name);
+        setSingleFileDuration(null);
+        extractWeightFromFile(file).then(weight => { if (weight) setManualBodyWeight(weight); });
+        extractDurationFromFile(file).then(duration => setSingleFileDuration(duration));
+        parseExcelFile(file);
+        setCurrentStep(1);
+    }, [parseExcelFile, resetState]);
+
     const handleProcessOutliers = useCallback(() => { const w = parseFloat(manualBodyWeight); if (isNaN(w) || w <= 0) return; processOutliers(rawData, w); setCurrentStep(2); }, [processOutliers, rawData, manualBodyWeight]);
     const handleSmoothing = useCallback(() => { const w = parseFloat(manualBodyWeight); if (isNaN(w) || w <= 0) return; const s = applyRollingAverage(cleanedData, w); if (s) calculateKeyMetrics(s); setCurrentStep(3); }, [applyRollingAverage, calculateKeyMetrics, cleanedData, manualBodyWeight]);
     const handleAnalysis = useCallback(() => { if (keyMetrics) { extractPercentageValues(smoothedData, keyMetrics); setCurrentStep(4); } }, [extractPercentageValues, keyMetrics, smoothedData]);
     const handleGenerateReport = () => { if (!reportRef.current) return; html2canvas(reportRef.current, { scale: 2 }).then(c => { const d = c.toDataURL('image/png'); const pdf = new jsPDF('p', 'mm', 'a4'); const w = pdf.internal.pageSize.getWidth(); const h = w * (c.height / c.width); pdf.addImage(d, 'PNG', 0, 0, w, h); pdf.save(`${fileName.replace(/\.[^/.]+$/, "")}_report.pdf`); }); };
+
+    const handleSaveToHistory = useCallback(() => {
+        if (!keyMetrics || !fileName) {
+            alert("没有可保存的数据。");
+            return;
+        }
+        const finalMetrics: KeyMetrics = { ...keyMetrics };
+        if (singleFileDuration !== null) {
+            finalMetrics.duration = singleFileDuration;
+        }
+        const newRecord: BatchResult = {
+            id: `${Date.now()}-${fileName}`,
+            testType: 'unspecified',
+            fileName: extractNameFromFile(fileName),
+            metrics: finalMetrics,
+            smoothedData: smoothedData,
+            percentageData: percentageData,
+            auditLog: auditLog,
+            cleaningStats: cleaningStats || undefined,
+        };
+        setHistoricalData(prev => [...prev, newRecord]);
+        alert(`'${extractNameFromFile(fileName)}' 的分析结果已成功存入历史记录。`);
+    }, [fileName, keyMetrics, singleFileDuration, smoothedData, percentageData, auditLog, cleaningStats, setHistoricalData]);
 
     const handleBatchFileSelect = async (files: FileList) => { const newFiles = await Promise.all(Array.from(files).map(async f => ({ file: f, weight: await extractWeightFromFile(f) || '' }))); setBatchFiles(p => [...p, ...newFiles]); };
     const handleWeightChange = (fileNameToUpdate: string, weight: string) => { setBatchFiles(prevFiles => prevFiles.map(f => f.file.name === fileNameToUpdate ? { ...f, weight } : f)); };
@@ -286,7 +321,7 @@ const App: React.FC = () => {
                         {currentStep >= 3 && smoothedData.length > 0 && <><DataChart data={smoothedData} /><DataTable data={smoothedData} title="30秒滚动平滑处理数据" /></>}
                     </div>
                     {currentStep === 3 && <div className="flex justify-end space-x-4 mt-6"><button onClick={() => exportToCsv(smoothedData, 'smoothed_data.csv')} className="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">下载平滑处理结果</button><button onClick={handleAnalysis} className="px-6 py-2 bg-brand-accent text-white font-semibold rounded-lg hover:bg-blue-500">进行最终分析</button></div>}
-                    {currentStep === 4 && keyMetrics && (<div><DataTable data={percentageData} title="%VO₂max/peak 数据" /><AucCalculator onCalculate={(s, e) => calculateAuc(smoothedData, keyMetrics.vo2max, s, e)} /><div className="flex justify-end items-center mt-6 p-4 bg-gray-100 rounded-lg"><button onClick={handleGenerateReport} className="px-6 py-2 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 mr-4">生成报告 (PDF)</button><button onClick={() => exportToXlsx(smoothedData, percentageData, 'smoothed_data', 'percentage_data', `${fileName}_all_data.xlsx`)} className="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 mr-4">下载全部数据(XLSX)</button><button onClick={handleReset} className="px-6 py-2 bg-brand-blue text-white font-semibold rounded-lg hover:bg-blue-700">分析新文件</button></div></div>)}
+                    {currentStep === 4 && keyMetrics && (<div><DataTable data={percentageData} title="%VO₂max/peak 数据" /><AucCalculator onCalculate={(s, e) => calculateAuc(smoothedData, keyMetrics.vo2max, s, e)} /><div className="flex flex-wrap justify-end items-center mt-6 p-4 bg-gray-100 rounded-lg gap-4"><button onClick={handleSaveToHistory} className="px-6 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700">存入纵向比较</button><button onClick={handleGenerateReport} className="px-6 py-2 bg-purple-600 text-white font-semibold rounded-lg shadow-md hover:bg-purple-700">生成报告 (PDF)</button><button onClick={() => exportToXlsx(smoothedData, percentageData, 'smoothed_data', 'percentage_data', `${fileName}_all_data.xlsx`)} className="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700">下载全部数据(XLSX)</button><button onClick={handleReset} className="px-6 py-2 bg-brand-blue text-white font-semibold rounded-lg shadow-md hover:bg-blue-700">分析新文件</button></div></div>)}
                 </div>
             )}
         </div>
