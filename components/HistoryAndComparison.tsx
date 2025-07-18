@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useCallback } from 'react';
 import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import type { BatchResult, KeyMetrics, ProcessedDataRow } from '../types';
@@ -103,10 +104,12 @@ const ActionsBar: React.FC<{ selectedCount: number; onDeleteSelected: () => void
 
 interface HistoryAndComparisonProps {
     data: BatchResult[];
-    setData: React.Dispatch<React.SetStateAction<BatchResult[]>>;
+    onTestTypeChange: (testId: string, newType: BatchResult['testType']) => void;
+    onDeleteTest: (testIds: Set<string> | string) => void;
+    onClearHistory: () => void;
 }
 
-export const HistoryAndComparison: React.FC<HistoryAndComparisonProps> = ({ data, setData }) => {
+export const HistoryAndComparison: React.FC<HistoryAndComparisonProps> = ({ data, onTestTypeChange, onDeleteTest, onClearHistory }) => {
     const [expandedSubject, setExpandedSubject] = useState<string | null>(null);
     const [expandedTestId, setExpandedTestId] = useState<string | null>(null);
     const [sortOrderText, setSortOrderText] = useState('');
@@ -117,7 +120,6 @@ export const HistoryAndComparison: React.FC<HistoryAndComparisonProps> = ({ data
             (acc[result.fileName] = acc[result.fileName] || []).push(result);
             return acc;
         }, {} as Record<string, BatchResult[]>);
-        // Sort tests within each subject by test type (pre, mid, post)
         Object.keys(grouped).forEach(subjectName => {
             grouped[subjectName].sort((a, b) => {
                  const order: Record<string, number> = { 'pre': 1, 'mid': 2, 'post': 3, 'unspecified': 4 };
@@ -137,18 +139,12 @@ export const HistoryAndComparison: React.FC<HistoryAndComparisonProps> = ({ data
         return sorted.map(s => s.fileName);
     }, [subjects, sortOrderText]);
     
-    const handleClearHistory = useCallback(() => {
+    const handleClearHistoryConfirm = useCallback(() => {
         if (window.confirm('确定要清空所有历史记录吗？此操作无法撤销。')) {
-            setData([]);
+            onClearHistory();
             setSelectedTests(new Set());
         }
-    }, [setData]);
-    
-    const handleTestTypeChange = useCallback((testId: string, newType: BatchResult['testType']) => {
-        setData(currentData => currentData.map(test => 
-            test.id === testId ? { ...test, testType: newType } : test
-        ));
-    }, [setData]);
+    }, [onClearHistory]);
 
     const handleToggleSelectTest = useCallback((testId: string) => {
         setSelectedTests(prev => {
@@ -178,34 +174,18 @@ export const HistoryAndComparison: React.FC<HistoryAndComparisonProps> = ({ data
 
     const handleDeleteSelected = useCallback(() => {
         if (selectedTests.size === 0) return;
-        const count = selectedTests.size;
-        
-        // Directly perform deletion without confirmation to ensure it works.
-        console.log(`已删除 ${count} 条记录。`);
-        
-        setData(currentData =>
-          currentData.filter(test => !selectedTests.has(test.id))
-        );
-        
+        onDeleteTest(selectedTests);
         setSelectedTests(new Set());
-    }, [setData, selectedTests]);
+    }, [onDeleteTest, selectedTests]);
 
     const handleSingleDelete = useCallback((testIdToDelete: string) => {
-        // Directly perform the deletion as requested.
-        console.log("已删除"); // Log to console to verify trigger
-        
-        // Update state to make the row disappear immediately
-        setData(currentData =>
-          currentData.filter(test => test.id !== testIdToDelete)
-        );
-
-        // Also update the selection state to be clean
+        onDeleteTest(testIdToDelete);
         setSelectedTests(currentSelected => {
           const newSelected = new Set(currentSelected);
           newSelected.delete(testIdToDelete);
           return newSelected;
         });
-    }, [setData, setSelectedTests]);
+    }, [onDeleteTest]);
     
     if (data.length === 0) {
         return (
@@ -235,7 +215,7 @@ export const HistoryAndComparison: React.FC<HistoryAndComparisonProps> = ({ data
                 </div>
             </header>
 
-            <ActionsBar selectedCount={selectedTests.size} onDeleteSelected={handleDeleteSelected} onClearHistory={handleClearHistory} />
+            <ActionsBar selectedCount={selectedTests.size} onDeleteSelected={handleDeleteSelected} onClearHistory={handleClearHistoryConfirm} />
 
             <div className="space-y-4">
                 {sortedSubjectNames.map(subjectName => {
@@ -267,7 +247,9 @@ export const HistoryAndComparison: React.FC<HistoryAndComparisonProps> = ({ data
                                                         </th>
                                                         <th className="px-4 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider">测试类型</th>
                                                         <th className="px-4 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider">时长(s)</th>
+                                                        <th className="px-4 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider">V'O2 (L/min)</th>
                                                         <th className="px-4 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider">V'O2/kg</th>
+                                                        <th className="px-4 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider">VEmax (L/min)</th>
                                                         <th className="px-4 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider">HRmax</th>
                                                         <th className="px-4 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider">RERmax</th>
                                                         <th className="px-4 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider">平台</th>
@@ -280,9 +262,11 @@ export const HistoryAndComparison: React.FC<HistoryAndComparisonProps> = ({ data
                                                         <React.Fragment key={test.id}>
                                                             <tr className={`hover:bg-gray-50 transition-colors ${selectedTests.has(test.id) ? 'bg-blue-50' : ''}`}>
                                                                 <td className="px-4 py-4"><input type="checkbox" className="rounded border-gray-300 text-brand-accent focus:ring-brand-accent" checked={selectedTests.has(test.id)} onChange={() => handleToggleSelectTest(test.id)} /></td>
-                                                                <td className="px-4 py-4"><select value={test.testType} onChange={e => handleTestTypeChange(test.id, e.target.value as any)} className="p-1 border rounded-md text-sm"><option value="unspecified">未指定</option><option value="pre">前测</option><option value="mid">中测</option><option value="post">后测</option></select></td>
+                                                                <td className="px-4 py-4"><select value={test.testType} onChange={e => onTestTypeChange(test.id, e.target.value as any)} className="p-1 border rounded-md text-sm"><option value="unspecified">未指定</option><option value="pre">前测</option><option value="mid">中测</option><option value="post">后测</option></select></td>
                                                                 <td className="px-4 py-4">{test.metrics.duration?.toFixed(0) ?? 'N/A'}</td>
+                                                                <td className="px-4 py-4 font-semibold">{test.metrics.vo2max.toFixed(2)}</td>
                                                                 <td className="px-4 py-4 font-semibold">{test.metrics.vo2max_kg.toFixed(2)}</td>
+                                                                <td className="px-4 py-4">{test.metrics.vemax.toFixed(2)}</td>
                                                                 <td className="px-4 py-4">{test.metrics.hrmax.toFixed(0)}</td>
                                                                 <td className="px-4 py-4">{test.metrics.rermax.toFixed(2)}</td>
                                                                 <td className="px-4 py-4">{test.metrics.plateauReached ? '✔️' : '❌'}</td>
@@ -291,7 +275,7 @@ export const HistoryAndComparison: React.FC<HistoryAndComparisonProps> = ({ data
                                                             </tr>
                                                             {expandedTestId === test.id && (
                                                                 <tr>
-                                                                    <td colSpan={9} className="p-4 bg-blue-50">
+                                                                    <td colSpan={11} className="p-4 bg-blue-50">
                                                                         {test.percentageData && test.smoothedData ? (
                                                                             <div>
                                                                                 <DataTable data={test.percentageData} title="百分位摄氧量结果" maxHeight="300px" />
