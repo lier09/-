@@ -174,6 +174,7 @@ const App: React.FC = () => {
     const [historicalData, setHistoricalData] = useState<BatchResult[]>([]);
     const [batchProcessingStatus, setBatchProcessingStatus] = useState('');
     const [isBatchLoading, setIsBatchLoading] = useState(false);
+    const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
     const reportRef = useRef<HTMLDivElement>(null);
     const { rawData, cleanedData, smoothedData, percentageData, auditLog, cleaningStats, keyMetrics, error, isLoading, parseExcelFile, processOutliers, applyRollingAverage, calculateKeyMetrics, extractPercentageValues, calculateAuc, resetState } = useDataProcessor();
     const LOCAL_STORAGE_KEY = 'vo2max_analysis_history';
@@ -222,7 +223,62 @@ const App: React.FC = () => {
     const handleProcessOutliers = useCallback(() => { const w = parseFloat(manualBodyWeight); if (isNaN(w) || w <= 0) return; processOutliers(rawData, w); setCurrentStep(2); }, [processOutliers, rawData, manualBodyWeight]);
     const handleSmoothing = useCallback(() => { const w = parseFloat(manualBodyWeight); if (isNaN(w) || w <= 0) return; const s = applyRollingAverage(cleanedData, w); if (s) calculateKeyMetrics(s); setCurrentStep(3); }, [applyRollingAverage, calculateKeyMetrics, cleanedData, manualBodyWeight]);
     const handleAnalysis = useCallback(() => { if (keyMetrics) { extractPercentageValues(smoothedData, keyMetrics); setCurrentStep(4); } }, [extractPercentageValues, keyMetrics, smoothedData]);
-    const handleGenerateReport = () => { if (!reportRef.current) return; html2canvas(reportRef.current, { scale: 2 }).then(c => { const d = c.toDataURL('image/png'); const pdf = new jsPDF('p', 'mm', 'a4'); const w = pdf.internal.pageSize.getWidth(); const h = w * (c.height / c.width); pdf.addImage(d, 'PNG', 0, 0, w, h); pdf.save(`${fileName.replace(/\.[^/.]+$/, "")}_report.pdf`); }); };
+    
+    const handleGenerateReport = async () => {
+        const input = reportRef.current;
+        if (!input) return;
+
+        setIsGeneratingPdf(true);
+
+        try {
+            const canvas = await html2canvas(input, {
+                scale: 2, // Higher scale for better resolution
+                useCORS: true,
+                // Allow html2canvas to render the full scrollable content
+                height: input.scrollHeight,
+                width: input.scrollWidth,
+                windowHeight: input.scrollHeight,
+                windowWidth: input.scrollWidth,
+            });
+            const imgData = canvas.toDataURL('image/png');
+
+            const pdf = new jsPDF({
+                orientation: 'landscape',
+                unit: 'mm',
+                format: 'a4'
+            });
+
+            const pdfWidth = pdf.internal.pageSize.getWidth();
+            const pdfHeight = pdf.internal.pageSize.getHeight();
+
+            const canvasWidth = canvas.width;
+            const canvasHeight = canvas.height;
+            const ratio = canvasWidth / canvasHeight;
+            const totalImageHeightInPdf = pdfWidth / ratio;
+
+            let position = 0;
+            pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, totalImageHeightInPdf);
+            
+            let heightLeft = totalImageHeightInPdf - pdfHeight;
+            let pageCount = 1;
+
+            while (heightLeft > 0) {
+                position = -pdfHeight * pageCount;
+                pdf.addPage();
+                pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, totalImageHeightInPdf);
+                heightLeft -= pdfHeight;
+                pageCount++;
+            }
+            
+            pdf.save(`${fileName.replace(/\.[^/.]+$/, "")}_report.pdf`);
+
+        } catch (error) {
+            console.error("Error generating PDF:", error);
+            alert("抱歉，生成PDF报告时出错。请检查控制台获取更多信息。");
+        } finally {
+            setIsGeneratingPdf(false);
+        }
+    };
 
     const handleSaveToHistory = useCallback(() => {
         if (!keyMetrics || !fileName) {
@@ -321,7 +377,58 @@ const App: React.FC = () => {
                         {currentStep >= 3 && smoothedData.length > 0 && <><DataChart data={smoothedData} /><DataTable data={smoothedData} title="30秒滚动平滑处理数据" /></>}
                     </div>
                     {currentStep === 3 && <div className="flex justify-end space-x-4 mt-6"><button onClick={() => exportToCsv(smoothedData, 'smoothed_data.csv')} className="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">下载平滑处理结果</button><button onClick={handleAnalysis} className="px-6 py-2 bg-brand-accent text-white font-semibold rounded-lg hover:bg-blue-500">进行最终分析</button></div>}
-                    {currentStep === 4 && keyMetrics && (<div><DataTable data={percentageData} title="%VO₂max/peak 数据" /><AucCalculator onCalculate={(s, e) => calculateAuc(smoothedData, keyMetrics.vo2max, s, e)} /><div className="flex flex-wrap justify-end items-center mt-6 p-4 bg-gray-100 rounded-lg gap-4"><button onClick={handleSaveToHistory} className="px-6 py-2 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700">存入纵向比较</button><button onClick={handleGenerateReport} className="px-6 py-2 bg-purple-600 text-white font-semibold rounded-lg shadow-md hover:bg-purple-700">生成报告 (PDF)</button><button onClick={() => exportToXlsx(smoothedData, percentageData, 'smoothed_data', 'percentage_data', `${fileName}_all_data.xlsx`)} className="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700">下载全部数据(XLSX)</button><button onClick={handleReset} className="px-6 py-2 bg-brand-blue text-white font-semibold rounded-lg shadow-md hover:bg-blue-700">分析新文件</button></div></div>)}
+                    {currentStep === 4 && keyMetrics && (
+                        <div>
+                            <DataTable data={percentageData} title="%VO₂max/peak 数据" />
+                            <AucCalculator onCalculate={(s, e) => calculateAuc(smoothedData, keyMetrics.vo2max, s, e)} />
+                            
+                            {/* Action Buttons Section */}
+                            <div className="mt-8 p-6 bg-gray-50 rounded-lg border">
+                                <h4 className="text-xl font-bold text-brand-blue mb-4 text-center">最终操作与导出</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    
+                                    {/* Save to History */}
+                                    <div className="flex flex-col">
+                                        <button onClick={handleSaveToHistory} className="px-6 py-3 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 transition-colors">
+                                            存入纵向比较
+                                        </button>
+                                        <p className="text-xs text-gray-500 mt-2">将本次分析结果保存到历史记录中，用于后续的纵向数据对比。</p>
+                                    </div>
+
+                                    {/* Generate PDF */}
+                                    <div className="flex flex-col">
+                                        <button 
+                                            onClick={handleGenerateReport} 
+                                            disabled={isGeneratingPdf}
+                                            className="px-6 py-3 bg-purple-600 text-white font-semibold rounded-lg shadow-md hover:bg-purple-700 transition-colors disabled:bg-gray-400"
+                                        >
+                                            {isGeneratingPdf ? '正在生成...' : '生成图文报告 (PDF)'}
+                                        </button>
+                                        <p className="text-xs text-gray-500 mt-2">将关键指标和图表汇总为一份横向、可多页的完整PDF报告。</p>
+                                    </div>
+                                    
+                                    {/* Download Data */}
+                                    <div className="flex flex-col">
+                                        <button 
+                                            onClick={() => exportToXlsx(smoothedData, percentageData, '30秒平滑数据', '百分位摄氧量数据', `${fileName.replace(/\.[^/.]+$/, "")}_processed_data.xlsx`)}
+                                            className="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 transition-colors">
+                                            下载分析数据 (XLSX)
+                                        </button>
+                                        <p className="text-xs text-gray-500 mt-2">
+                                            下载包含两个工作表的Excel文件: 
+                                            <br/>1. 30秒平滑处理后的完整数据。
+                                            <br/>2. 各百分位下的摄氧量数据。
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="mt-8 border-t pt-6 text-center">
+                                    <button onClick={handleReset} className="px-8 py-3 bg-brand-blue text-white font-semibold rounded-lg shadow-md hover:bg-blue-700">
+                                        分析另一个文件
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
         </div>
