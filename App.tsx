@@ -286,8 +286,6 @@ const App: React.FC = () => {
             return;
         }
     
-        // Recalculate metrics directly from smoothedData to ensure they are fresh and complete.
-        // This avoids relying on component state which could be stale.
         const finalMetrics = calculateKeyMetricsForData(smoothedData);
         if (singleFileDuration !== null) {
             finalMetrics.duration = singleFileDuration;
@@ -307,7 +305,7 @@ const App: React.FC = () => {
         };
         setHistoricalData(prev => [...prev, newRecord]);
         alert(`'${extractNameFromFile(fileName)}' 的分析结果已成功存入历史记录。`);
-    }, [fileName, smoothedData, singleFileDuration, auditLog, cleaningStats, setHistoricalData]);
+    }, [fileName, smoothedData, singleFileDuration, auditLog, cleaningStats]);
 
     const handleBatchFileSelect = async (files: FileList) => { const newFiles = await Promise.all(Array.from(files).map(async f => ({ file: f, weight: await extractWeightFromFile(f) || '' }))); setBatchFiles(p => [...p, ...newFiles]); };
     const handleWeightChange = (fileNameToUpdate: string, weight: string) => { setBatchFiles(prevFiles => prevFiles.map(f => f.file.name === fileNameToUpdate ? { ...f, weight } : f)); };
@@ -334,6 +332,31 @@ const App: React.FC = () => {
         setIsBatchLoading(false); 
         setBatchProcessingStatus(`完成! ${newResults.length} 个新文件已处理并存入历史记录。`);
     };
+
+     // --- Centralized History Management ---
+    const handleClearHistory = useCallback(() => {
+        setHistoricalData([]);
+    }, []);
+
+    const handleTestTypeChange = useCallback((testId: string, newType: BatchResult['testType']) => {
+        setHistoricalData(currentData => currentData.map(test =>
+            test.id === testId ? { ...test, testType: newType } : test
+        ));
+    }, []);
+
+    const handleDeleteTests = useCallback((testIdsToDelete: Set<string> | string) => {
+        console.log("已删除"); // Log to console to verify trigger
+        if (typeof testIdsToDelete === 'string') {
+            setHistoricalData(currentData =>
+                currentData.filter(test => test.id !== testIdsToDelete)
+            );
+        } else {
+            setHistoricalData(currentData =>
+                currentData.filter(test => !testIdsToDelete.has(test.id))
+            );
+        }
+    }, []);
+
 
     const renderDashboard = () => (
         <div>
@@ -575,7 +598,14 @@ const App: React.FC = () => {
             {currentView === 'single_analysis' && renderSingleAnalysisView()}
             {currentView === 'batch_processing' && renderBatchProcessingView()}
             {currentView === 'power_calculator' && <PowerCalculatorMode />}
-            {currentView === 'longitudinal_comparison' && <HistoryAndComparison data={historicalData} setData={setHistoricalData} />}
+            {currentView === 'longitudinal_comparison' && (
+                <HistoryAndComparison 
+                    data={historicalData} 
+                    onDeleteTest={handleDeleteTests}
+                    onClearHistory={handleClearHistory}
+                    onTestTypeChange={handleTestTypeChange}
+                />
+            )}
 
         </div>
     );
