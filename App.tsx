@@ -281,27 +281,33 @@ const App: React.FC = () => {
     };
 
     const handleSaveToHistory = useCallback(() => {
-        if (!keyMetrics || !fileName) {
-            alert("没有可保存的数据。");
+        if (!smoothedData || smoothedData.length === 0 || !fileName) {
+            alert("没有可用于保存的平滑数据。");
             return;
         }
-        const finalMetrics: KeyMetrics = { ...keyMetrics };
+    
+        // Recalculate metrics directly from smoothedData to ensure they are fresh and complete.
+        // This avoids relying on component state which could be stale.
+        const finalMetrics = calculateKeyMetricsForData(smoothedData);
         if (singleFileDuration !== null) {
             finalMetrics.duration = singleFileDuration;
         }
+        
+        const finalPercentageData = extractPercentageDataForMetrics(smoothedData, finalMetrics);
+
         const newRecord: BatchResult = {
             id: `${Date.now()}-${fileName}`,
             testType: 'unspecified',
             fileName: extractNameFromFile(fileName),
             metrics: finalMetrics,
             smoothedData: smoothedData,
-            percentageData: percentageData,
+            percentageData: finalPercentageData,
             auditLog: auditLog,
             cleaningStats: cleaningStats || undefined,
         };
         setHistoricalData(prev => [...prev, newRecord]);
         alert(`'${extractNameFromFile(fileName)}' 的分析结果已成功存入历史记录。`);
-    }, [fileName, keyMetrics, singleFileDuration, smoothedData, percentageData, auditLog, cleaningStats, setHistoricalData]);
+    }, [fileName, smoothedData, singleFileDuration, auditLog, cleaningStats, setHistoricalData]);
 
     const handleBatchFileSelect = async (files: FileList) => { const newFiles = await Promise.all(Array.from(files).map(async f => ({ file: f, weight: await extractWeightFromFile(f) || '' }))); setBatchFiles(p => [...p, ...newFiles]); };
     const handleWeightChange = (fileNameToUpdate: string, weight: string) => { setBatchFiles(prevFiles => prevFiles.map(f => f.file.name === fileNameToUpdate ? { ...f, weight } : f)); };
