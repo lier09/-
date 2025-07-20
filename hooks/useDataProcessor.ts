@@ -414,7 +414,8 @@ export const cleanAndInterpolateData = (data: ProcessedDataRow[], bodyWeight: nu
 export const applySmoothing = (data: ProcessedDataRow[], bodyWeight: number): ProcessedDataRow[] => {
     const newSmoothedData = JSON.parse(JSON.stringify(data)) as ProcessedDataRow[];
     if (data.length < 3) {
-        return newSmoothedData;
+        // If data is too short for smoothing, we still ensure derived metrics are calculated.
+        return newSmoothedData.map(row => recalculateDerivedMetrics(row, bodyWeight));
     }
 
     const colsToSmooth: (keyof ProcessedDataRow)[] = ["V'O2", "V'CO2", "V'E", "HR", "VT", "BF"];
@@ -431,9 +432,37 @@ export const applySmoothing = (data: ProcessedDataRow[], bodyWeight: number): Pr
         }
     }
     
-    const finalSmoothedData = newSmoothedData.map(row => recalculateDerivedMetrics(row, bodyWeight));
+    // After smoothing the primary metrics, we explicitly recalculate all derived metrics.
+    // This ensures RER is based on the new, smoothed V'O2 and V'CO2 values.
+    const finalSmoothedData = newSmoothedData.map(row => {
+        const newRow = { ...row };
+        const vo2 = newRow["V'O2"];
+        const vco2 = newRow["V'CO2"];
+        const ve = newRow["V'E"];
+        const hr = newRow["HR"];
+
+        // Recalculate other derived metrics based on the now-smoothed primary values
+        if (typeof vo2 === 'number' && bodyWeight > 0) newRow["V'O2/kg"] = vo2 * 1000 / bodyWeight; else newRow["V'O2/kg"] = null;
+        if (typeof vo2 === 'number' && typeof hr === 'number' && hr > 0) newRow["V'O2/HR"] = vo2 * 1000 / hr; else newRow["V'O2/HR"] = null;
+        if (typeof ve === 'number' && typeof vo2 === 'number' && vo2 > 0) newRow["V'E/V'O2"] = ve / vo2; else newRow["V'E/V'O2"] = null;
+        if (typeof ve === 'number' && typeof vco2 === 'number' && vco2 > 0) newRow["V'E/V'CO2"] = ve / vco2; else newRow["V'E/V'CO2"] = null;
+        
+        // This is the key rule update: RER is recalculated using the formula V'CO2 / V'O2 on the smoothed data.
+        if (typeof vco2 === 'number' && typeof vo2 === 'number' && vo2 > 0) {
+            const rer = vco2 / vo2;
+            newRow["RER"] = rer;
+            newRow["VD/VT(est)"] = Math.max(0, 0.25 * rer - 0.05); // This also depends on the new RER
+        } else {
+            newRow["RER"] = null;
+            newRow["VD/VT(est)"] = null;
+        }
+        
+        return newRow;
+    });
+
     return finalSmoothedData;
 };
+
 
 export const calculateKeyMetricsForData = (data: ProcessedDataRow[]): KeyMetrics => {
     if (data.length === 0) {
