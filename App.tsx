@@ -16,9 +16,13 @@ import { FileUpload } from './components/FileUpload';
 import { DataTable } from './components/DataTable';
 import { DataChart } from './components/DataChart';
 import { exportToCsv, exportToXlsx } from './utils/fileUtils';
-import type { ProcessedDataRow, AuditLogEntry, KeyMetrics, BatchResult, CleaningStats, AucResult } from './types';
+import type { ProcessedDataRow, AuditLogEntry, KeyMetrics, BatchResult, CleaningStats, AucResult, AnalysisRecord } from './types';
 import { HistoryAndComparison } from './components/HistoryAndComparison';
+import { ThresholdAnalysis } from './components/ThresholdAnalysis';
 import { applySortOrder } from './utils/sortingUtils';
+import { AnalysisData, ThresholdAnalyzer } from './components/ThresholdAnalyzer';
+import { ThresholdHistoryManager } from './components/ThresholdHistoryManager';
+
 
 // --- Helper Functions & Components ---
 
@@ -51,6 +55,14 @@ const IconSingleFile = () => <svg xmlns="http://www.w3.org/2000/svg" className="
 const IconBatchFile = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-brand-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}><path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>;
 const IconCalculator = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-brand-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}><path strokeLinecap="round" strokeLinejoin="round" d="M9 7h6m3 1a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V10a2 2 0 012-2h1V6a1 1 0 011-1h4a1 1 0 011 1v1h1z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 13H9" /></svg>;
 const IconChart = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-brand-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}><path strokeLinecap="round" strokeLinejoin="round" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" /></svg>;
+const IconThreshold = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-brand-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4h16v16H4z" /><path strokeLinecap="round" strokeLinejoin="round" d="M6 18l6-8 6 5" /><path strokeLinecap="round" strokeLinejoin="round" strokeDasharray="3 3" d="M11 4v16" /><path strokeLinecap="round" strokeLinejoin="round" strokeDasharray="3 3" d="M16 4v16" /></svg>;
+const IconThresholdHistory = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-brand-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h.01M9 16h.01M13 12h4m-4 4h4" />
+    </svg>
+);
+
 
 const StepIndicator: React.FC<{ currentStep: number }> = ({ currentStep }) => {
     const steps = ["上传文件", "数据清洗", "平滑与分析", "最终分析 & 报告"];
@@ -161,7 +173,7 @@ const PowerCalculatorMode: React.FC = () => {
 };
 
 const App: React.FC = () => {
-    type View = 'dashboard' | 'single_analysis' | 'batch_processing' | 'power_calculator' | 'longitudinal_comparison';
+    type View = 'dashboard' | 'single_analysis' | 'batch_processing' | 'power_calculator' | 'longitudinal_comparison' | 'threshold_analysis' | 'threshold_history';
     const [currentView, setCurrentView] = useState<View>('dashboard');
     const [currentStep, setCurrentStep] = useState(0);
     const [fileName, setFileName] = useState('');
@@ -178,6 +190,12 @@ const App: React.FC = () => {
     const reportRef = useRef<HTMLDivElement>(null);
     const { rawData, cleanedData, smoothedData, percentageData, auditLog, cleaningStats, keyMetrics, error, isLoading, parseExcelFile, processOutliers, applyRollingAverage, calculateKeyMetrics, extractPercentageValues, calculateAuc, resetState } = useDataProcessor();
     const LOCAL_STORAGE_KEY = 'vo2max_analysis_history';
+    const THRESHOLD_HISTORY_LOCAL_STORAGE_KEY = 'threshold_analysis_history_v3';
+
+    // State for threshold analysis, lifted from child component
+    const [thresholdHistory, setThresholdHistory] = useState<AnalysisRecord[]>([]);
+    const [currentThresholdAnalysis, setCurrentThresholdAnalysis] = useState<AnalysisRecord | null>(null);
+
 
     const sortedBatchFiles = useMemo(() => {
         const order = batchSortOrderText.split(/[\r\n]+/).map(name => name.trim()).filter(Boolean);
@@ -194,6 +212,27 @@ const App: React.FC = () => {
 
     useEffect(() => { try { const d = localStorage.getItem(LOCAL_STORAGE_KEY); if(d) setHistoricalData(JSON.parse(d)); } catch (e) { console.error("Failed to load data", e); } }, []);
     useEffect(() => { try { localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(historicalData)); } catch (e) { console.error("Failed to save data", e); } }, [historicalData]);
+    
+    // useEffects for threshold history
+    useEffect(() => {
+        try {
+            const savedHistory = localStorage.getItem(THRESHOLD_HISTORY_LOCAL_STORAGE_KEY);
+            if (savedHistory) {
+                setThresholdHistory(JSON.parse(savedHistory));
+            }
+        } catch (e) {
+            console.error("Failed to load threshold history from localStorage", e);
+        }
+    }, []);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(THRESHOLD_HISTORY_LOCAL_STORAGE_KEY, JSON.stringify(thresholdHistory));
+        } catch (e) {
+            console.error("Failed to save threshold history to localStorage", e);
+        }
+    }, [thresholdHistory]);
+
 
     const handleReset = () => { 
         resetState(); 
@@ -207,6 +246,7 @@ const App: React.FC = () => {
         setBatchProcessingStatus(''); 
         setCurrentView('dashboard');
         setCurrentBatchResults([]);
+        setCurrentThresholdAnalysis(null);
     };
 
     const handleFileSelectForSingleAnalysis = useCallback((file: File) => {
@@ -356,16 +396,53 @@ const App: React.FC = () => {
             );
         }
     }, []);
+    
+    // --- Threshold History Handlers ---
+    const handleSaveThresholdAnalysis = useCallback((analysisData: AnalysisData) => {
+        const newRecord: AnalysisRecord = {
+            id: `${Date.now()}-${analysisData.fileName}`,
+            timestamp: Date.now(),
+            ...analysisData
+        };
+        // Upsert logic: remove old entry if it exists, then add the new one
+        setThresholdHistory(prev => [newRecord, ...prev.filter(r => r.subjectName !== newRecord.subjectName || r.testType !== newRecord.testType)]);
+        alert(`'${analysisData.subjectName}' 的分析已保存到历史记录。`);
+    }, []);
+
+    const handleLoadThresholdAnalysis = useCallback((id: string) => {
+        const record = thresholdHistory.find(h => h.id === id);
+        if (record) {
+            setCurrentThresholdAnalysis(record);
+            setCurrentView('threshold_analysis'); // Switch to the analyzer view
+            alert(`已加载 '${record.subjectName}' 的历史分析。`);
+        }
+    }, [thresholdHistory]);
+    
+    const handleDeleteThresholdAnalysis = useCallback((id: string) => {
+        setThresholdHistory(prev => prev.filter(h => h.id !== id));
+        if (currentThresholdAnalysis?.id === id) {
+            setCurrentThresholdAnalysis(null);
+        }
+    }, [currentThresholdAnalysis]);
+
+     const handleClearThresholdHistory = useCallback(() => {
+        if (window.confirm("确定要清空所有分析历史记录吗？此操作无法撤销。")) {
+            setThresholdHistory([]);
+            setCurrentThresholdAnalysis(null);
+        }
+    }, []);
 
 
     const renderDashboard = () => (
         <div>
             <h2 className="text-3xl font-bold text-brand-blue mb-8 text-center">选择一个功能模块</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                 <DashboardCard title="单个文件详细分析" description="上传单个文件进行分步检查、图表分析并生成报告。" icon={<IconSingleFile />} onClick={() => setCurrentView('single_analysis')} />
                 <DashboardCard title="多文件批量处理" description="一次性处理多个文件，结果将自动保存用于纵向比较。" icon={<IconBatchFile />} onClick={() => setCurrentView('batch_processing')} />
                 <DashboardCard title="最大功率计算" description="根据测试时间和方案，快速从原始数据计算最大功率。" icon={<IconCalculator />} onClick={() => setCurrentView('power_calculator')} />
                 <DashboardCard title="摄氧量纵向比较" description="查看所有历史测试数据，对比受试者前后测变化。" icon={<IconChart />} onClick={() => setCurrentView('longitudinal_comparison')} />
+                <DashboardCard title="递增运动阈值 (LT/RCP)" description="可视化分析递增运动数据，识别乳酸阈和呼吸代偿点。" icon={<IconThreshold />} onClick={() => setCurrentView('threshold_analysis')} />
+                <DashboardCard title="递增运动阈值历史记录" description="查看、加载或删除所有已保存的递增运动阈值分析记录。" icon={<IconThresholdHistory />} onClick={() => setCurrentView('threshold_history')} />
             </div>
         </div>
     );
@@ -606,6 +683,21 @@ const App: React.FC = () => {
                     onTestTypeChange={handleTestTypeChange}
                 />
             )}
+            {currentView === 'threshold_analysis' && 
+                <ThresholdAnalysis 
+                    onSave={handleSaveThresholdAnalysis}
+                    initialData={currentThresholdAnalysis}
+                    onReset={() => setCurrentThresholdAnalysis(null)}
+                />
+            }
+            {currentView === 'threshold_history' && 
+                <ThresholdHistoryManager
+                    history={thresholdHistory}
+                    onLoad={handleLoadThresholdAnalysis}
+                    onDelete={handleDeleteThresholdAnalysis}
+                    onClearAll={handleClearThresholdHistory}
+                />
+            }
 
         </div>
     );
